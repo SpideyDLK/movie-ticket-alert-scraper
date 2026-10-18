@@ -2,6 +2,11 @@ from datetime import datetime, timezone
 from .base_provider import BaseProvider
 from schemas.ingestion import IngestionPayload
 import requests, json
+from playwright.sync_api import sync_playwright
+from config.scope_config import (
+    get_next_action_id,
+    update_next_action_id,
+)
 
 class ScopeProvider(BaseProvider):
 
@@ -9,7 +14,8 @@ class ScopeProvider(BaseProvider):
     def name(self) -> str:
         return "SCOPE"
 
-    url = "https://www.scopecinemas.com/movies/coming-soon"
+    URL = "https://www.scopecinemas.com/movies/coming-soon"
+    API_PATH = "/movies/coming-soon"
 
     payload = [{
         "status": "2",
@@ -18,18 +24,20 @@ class ScopeProvider(BaseProvider):
         "limit": 0
     }]
 
-    headers = {
-        "Accept": "text/x-component",
-        "Content-Type": "text/plain;charset=UTF-8",
-        "Next-Action": "7fb04f39ec6786cd2c906f62e70dd9ae64cd276463",
-        "Origin": "https://www.scopecinemas.com",
-        "Referer": "https://www.scopecinemas.com/movies/coming-soon"
-    }
-
     def get_data(self):
-        response = requests.post(self.url, headers=self.headers, json=self.payload)
-        response.encoding = "utf-8"
-        raw_movies = self.parse_response(response)['data']
+
+        try:
+            raw_movies = self.fetch_from_scope()
+
+        except requests.exceptions.RequestException as first_error:
+            print(f"Scope request failed: {first_error}")
+            print("Refreshing Next-Action ID using Playwright...")
+
+            self.get_next_action()
+
+            print("Retrying Scope request...")
+            # If this fails, the exception propagates and the scraper fails.
+            raw_movies = self.fetch_from_scope()
 
         movies = [
             {
@@ -53,8 +61,69 @@ class ScopeProvider(BaseProvider):
             observedAt=datetime.now(timezone.utc),
             movies=movies,
         )
+    
+    def fetch_from_scope(self):
+        response = requests.post(self.URL, headers=self.get_headers(), json=self.payload)
+        response.encoding = "utf-8"
+        response.raise_for_status()
+        return self.parse_response(response)['data']
+    
+    def get_headers(self):
+        return {
+            "Accept": "text/x-component",
+            "Content-Type": "text/plain;charset=UTF-8",
+            "Next-Action": get_next_action_id(),
+            "Origin": "https://www.scopecinemas.com",
+            "Referer": self.URL,
+        }
+        
+
+    def get_next_action(self):
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+
+            try:
+                with page.expect_request(
+                    lambda request: (
+                        request.method == "POST"
+                        and self.API_PATH in request.url
+                    ),
+                    timeout=30_000,
+                ) as request_info:
+                    page.goto(self.URL)
+
+                request = request_info.value
+                action_id = request.headers.get("next-action")
+
+                if not action_id:
+                    raise RuntimeError("Next-Action header not found")
+
+                update_next_action_id(action_id)
+
+            finally:
+                browser.close()
 
     def parse_response(self, response):
-        text =  response.text
-        json_text = text.split("1:", 1)[1]
-        return json.loads(json_text)
+        for line in response.text.splitlines():
+            if line.startswith("1:"):
+                try:
+                    payload = json.loads(line[2:])
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        "Scope returned an invalid movie-data JSON record"
+                    ) from exc
+
+                if not payload.get("success"):
+                    raise ValueError("Scope reported an unsuccessful request")
+
+                if not isinstance(payload.get("data"), list):
+                    raise ValueError("Scope response has no valid movie list")
+
+                return payload
+
+        raise ValueError(
+            f"Scope response did not contain the expected movie-data record. "
+            f"Status: {response.status_code}, "
+            f"Content-Type: {response.headers.get('Content-Type')}"
+        )
