@@ -87,6 +87,19 @@ class ScopeProvider(BaseProvider):
         )
 
         self.logger.info(
+            "Scope response: status=%d, content_type=%s, content_length=%s",
+            response.status_code,
+            response.headers.get("Content-Type"),
+            len(response.content),
+        )
+
+        if response.status_code == 403:
+            self.logger.warning(
+                "Scope 403 response body: %s",
+                response.text[:1000],
+            )
+
+        self.logger.info(
             "Scope responded with HTTP %d",
             response.status_code
         )
