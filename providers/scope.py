@@ -125,40 +125,34 @@ class ScopeProvider(BaseProvider):
         
 
     def get_next_action(self):
-        self.logger.info("Refreshing Scope Next-Action ID using Playwright")
+        self.logger.info("Testing Scope navigation using Playwright")
 
-        try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
 
-                try:
-                    page = browser.new_page()
+            try:
+                page = browser.new_page()
 
-                    with page.expect_request(
-                        lambda request: (
-                            request.method == "POST"
-                            and self.API_PATH in request.url
-                        ),
-                        timeout=30_000,
-                    ) as request_info:
-                        page.goto(self.URL, timeout=30_000)
+                response = page.goto(
+                    self.URL,
+                    wait_until="domcontentloaded",
+                    timeout=45_000,
+                )
 
-                    request = request_info.value
-                    action_id = request.headers.get("next-action")
+                self.logger.info(
+                    "Navigation status: %s",
+                    response.status if response else None,
+                )
+                self.logger.info("Final URL: %s", page.url)
+                self.logger.info("Page title: %s", page.title())
 
-                    if not action_id:
-                        raise RuntimeError("Next-Action header not found")
+                self.logger.info(
+                    "Page content preview: %s",
+                    page.locator("body").inner_text()[:500],
+                )
 
-                    update_next_action_id(action_id)
-
-                    self.logger.info("Next-Action ID refreshed successfully")
-
-                finally:
-                    browser.close()
-
-        except Exception:
-            self.logger.exception("Failed to refresh Next-Action ID")
-            raise
+            finally:
+                browser.close()
 
     def parse_response(self, response):
         for line in response.text.splitlines():
