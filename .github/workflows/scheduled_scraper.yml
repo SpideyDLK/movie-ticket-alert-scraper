@@ -38,4 +38,5 @@ jobs:
         env:
           BACK_END_URL: ${{ secrets.BACK_END_URL }}
           BACK_END_API_KEY: ${{ secrets.BACK_END_API_KEY }}
+          SCOPE_NEXT_ACTION: ${{ secrets.SCOPE_NEXT_ACTION }}
         run: python main.py
