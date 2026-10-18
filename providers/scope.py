@@ -78,6 +78,7 @@ class ScopeProvider(BaseProvider):
     
     def fetch_from_scope(self):
         self.logger.info("Sending request to Scope Cinemas")
+        print(self.get_headers())
         response = requests.post(
             self.URL,
             headers=self.get_headers(),
