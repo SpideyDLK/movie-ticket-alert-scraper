@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 load_dotenv()
 
 BACK_END_URL = os.getenv("BACK_END_URL")
+BACK_END_API_KEY = os.getenv("BACK_END_API_KEY")
 
 if not BACK_END_URL:
     raise RuntimeError("BACK_END_URL environment variable is not set")
@@ -49,6 +50,7 @@ def ingest(payload):
     logger.info("Sending movie data to ingestion API. URL: %s", ingestion_url)
     response = requests.post(
         ingestion_url,
+        headers={"X-API-KEY": BACK_END_API_KEY},
         json=payload,
     )
     response.raise_for_status()
