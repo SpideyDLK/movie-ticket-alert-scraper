@@ -15,10 +15,18 @@ class ScopeProvider(BaseProvider):
 
     load_dotenv()
 
+    logger = logging.getLogger("movie_scraper.scope")
+
+
     PROXY_SERVER = os.getenv("PROXY_SERVER")
     PROXY_USERNAME = os.getenv("PROXY_USERNAME")
     PROXY_PASSWORD = os.getenv("PROXY_PASSWORD")
     PROXY_PORT = os.getenv("PROXY_PORT")
+
+    logger.info(PROXY_USERNAME)
+    logger.info(PROXY_SERVER)
+    logger.info(PROXY_PASSWORD)
+    logger.info(PROXY_PORT)
 
     if all([PROXY_SERVER, PROXY_USERNAME, PROXY_PASSWORD, PROXY_PORT]):
         PROXY_URL = f"http://{PROXY_USERNAME}:{PROXY_PASSWORD}@{PROXY_SERVER}:{PROXY_PORT}"
@@ -39,7 +47,6 @@ class ScopeProvider(BaseProvider):
         "limit": 0
     }]
 
-    logger = logging.getLogger("movie_scraper.scope")
 
     def get_data(self):
 
