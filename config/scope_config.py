@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-next_action_id = os.getenv("SCOPE_NEXT_ACTION")
+next_action_id = os.getenv("SCOPE_NEXT_ACTION") or ""
 def get_next_action_id() -> str | None:
     return next_action_id
 

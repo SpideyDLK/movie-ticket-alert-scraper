@@ -8,8 +8,27 @@ from config.scope_config import (
     get_next_action_id,
     update_next_action_id,
 )
+from dotenv import load_dotenv
+import os
 
 class ScopeProvider(BaseProvider):
+
+    load_dotenv()
+
+    logger = logging.getLogger("movie_scraper.scope")
+
+
+    PROXY_SERVER = os.getenv("PROXY_SERVER")
+    PROXY_USERNAME = os.getenv("PROXY_USERNAME")
+    PROXY_PASSWORD = os.getenv("PROXY_PASSWORD")
+    PROXY_PORT = os.getenv("PROXY_PORT")
+
+    
+
+    if all([PROXY_SERVER, PROXY_USERNAME, PROXY_PASSWORD, PROXY_PORT]):
+        PROXY_URL = f"http://{PROXY_USERNAME}:{PROXY_PASSWORD}@{PROXY_SERVER}:{PROXY_PORT}"
+    else:
+        PROXY_URL = None
 
     @property
     def name(self) -> str:
@@ -25,9 +44,12 @@ class ScopeProvider(BaseProvider):
         "limit": 0
     }]
 
-    logger = logging.getLogger("movie_scraper.scope")
 
     def get_data(self):
+        self.logger.info(self.PROXY_USERNAME)
+        self.logger.info(self.PROXY_SERVER)
+        self.logger.info(self.PROXY_PASSWORD)
+        self.logger.info(self.PROXY_PORT)
 
         try:
             try:
@@ -78,11 +100,16 @@ class ScopeProvider(BaseProvider):
     
     def fetch_from_scope(self):
         self.logger.info("Sending request to Scope Cinemas")
+        self.logger.info(self.PROXY_URL)
         response = requests.post(
             self.URL,
             headers=self.get_headers(),
             json=self.payload,
             timeout=(10, 30),
+            proxies={
+                "http": self.PROXY_URL,
+                "https": self.PROXY_URL
+            } if self.PROXY_URL else None
         )
 
         self.logger.info(
@@ -115,7 +142,14 @@ class ScopeProvider(BaseProvider):
 
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
+                browser = p.chromium.launch(
+                    headless=True,
+                    proxy={
+                        "server": self.PROXY_SERVER,
+                        "username": self.PROXY_USERNAME,
+                        "password": self.PROXY_PASSWORD
+                    } if all([self.PROXY_SERVER, self.PROXY_USERNAME, self.PROXY_PASSWORD]) else None
+                )
 
                 try:
                     page = browser.new_page()
@@ -125,9 +159,9 @@ class ScopeProvider(BaseProvider):
                             request.method == "POST"
                             and self.API_PATH in request.url
                         ),
-                        timeout=30_000,
+                        timeout=60_000,
                     ) as request_info:
-                        page.goto(self.URL, timeout=30_000)
+                        page.goto(self.URL, timeout=60_000)
 
                     request = request_info.value
                     action_id = request.headers.get("next-action")
