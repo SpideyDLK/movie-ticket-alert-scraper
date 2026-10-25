@@ -1,0 +1,11 @@
+name = "mtas-scope-browser-helper"
+main = "src/index.js"
+compatibility_date = "2026-10-24"
+compatibility_flags = ["nodejs_compat"]
+
+[browser]
+binding = "MYBROWSER"
+
+[observability.logs]
+enabled = true
+invocation_logs = true

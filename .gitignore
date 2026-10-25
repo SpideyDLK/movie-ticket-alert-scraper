@@ -1,3 +1,11 @@
 .env
 pycache/
 *.py[cod]
+node_modules
+.dev.vars
+
+# Cloudflare Workers generated files
+.wrangler/
+
+# Python Worker generated dependencies
+python_modules/

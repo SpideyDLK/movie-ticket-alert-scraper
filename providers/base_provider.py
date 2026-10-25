@@ -9,5 +9,5 @@ class BaseProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_data(self) -> IngestionPayload:
+    async def get_data(self) -> IngestionPayload:
         raise NotImplementedError
