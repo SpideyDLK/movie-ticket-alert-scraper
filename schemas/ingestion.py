@@ -1,25 +1,27 @@
-
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
-
-class MoviePayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    externalId: str = Field(min_length=1)
-    title: str = Field(min_length=1)
+@dataclass
+class MoviePayload:
+    externalId: str
+    title: str
     slug: str | None = None
-    imageUrl: HttpUrl | None = None
+    imageUrl: str | None = None
     availability: Literal[
         "UNKNOWN", "UNAVAILABLE", "AVAILABLE"
     ] = "UNKNOWN"
 
 
-class IngestionPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+@dataclass
+class IngestionPayload:
     provider: Literal["SCOPE", "BMS"]
     observedAt: datetime
     movies: list[MoviePayload]
+
+    def model_dump(self, mode: str = "python") -> dict:
+        result = asdict(self)
+        if mode == "json":
+            result["observedAt"] = self.observedAt.isoformat()
+        return result

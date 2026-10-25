@@ -1,75 +1,60 @@
+
+import json
+import logging
 from datetime import datetime, timezone
+
+from js import Object, fetch, Request
+from pyodide.ffi import to_js
+
 from .base_provider import BaseProvider
 from schemas.ingestion import IngestionPayload
-import requests, json
-import logging
-from playwright.sync_api import sync_playwright
-from config.scope_config import (
-    get_next_action_id,
-    update_next_action_id,
-)
-from dotenv import load_dotenv
-import os
+
 
 class ScopeProvider(BaseProvider):
-
-    load_dotenv()
-
     logger = logging.getLogger("movie_scraper.scope")
 
+    URL = "https://www.scopecinemas.com/movies/coming-soon"
+    API_PATH = "/movies/coming-soon"
 
-    PROXY_SERVER = os.getenv("PROXY_SERVER")
-    PROXY_USERNAME = os.getenv("PROXY_USERNAME")
-    PROXY_PASSWORD = os.getenv("PROXY_PASSWORD")
-    PROXY_PORT = os.getenv("PROXY_PORT")
-
-    
-
-    if all([PROXY_SERVER, PROXY_USERNAME, PROXY_PASSWORD, PROXY_PORT]):
-        PROXY_URL = f"http://{PROXY_USERNAME}:{PROXY_PASSWORD}@{PROXY_SERVER}:{PROXY_PORT}"
-    else:
-        PROXY_URL = None
+    PAYLOAD = [{
+        "status": "2",
+        "filters": [],
+        "page": 0,
+        "limit": 0,
+    }]
 
     @property
     def name(self) -> str:
         return "SCOPE"
 
-    URL = "https://www.scopecinemas.com/movies/coming-soon"
-    API_PATH = "/movies/coming-soon"
+    @staticmethod
+    def _to_js(value):
+        return to_js(value, dict_converter=Object.fromEntries)
 
-    payload = [{
-        "status": "2",
-        "filters": [],
-        "page": 0,
-        "limit": 0
-    }]
-
-
-    def get_data(self):
-        self.logger.info(self.PROXY_USERNAME)
-        self.logger.info(self.PROXY_SERVER)
-        self.logger.info(self.PROXY_PASSWORD)
-        self.logger.info(self.PROXY_PORT)
-
+    async def get_data(self, env) -> IngestionPayload:
         try:
-            try:
-                raw_movies = self.fetch_from_scope()
+            action_id = await env.SCOPE_NEXT_ACTION.get("last_run")
 
-            except requests.exceptions.RequestException as first_exception:
-                self.logger.warning(
-                    "Initial Scope request failed (%s). "
-                    "Refreshing Next-Action ID before retrying.",
-                    first_exception,
+            if action_id:
+                try:
+                    raw_movies = await self.fetch_from_scope(action_id)
+                except Exception:
+                    self.logger.warning(
+                        "Scope request failed using the stored Next-Action ID; "
+                        "refreshing it and retrying.",
+                        exc_info=True,
+                    )
+                    action_id = await self.refresh_next_action(env)
+                    raw_movies = await self.fetch_from_scope(action_id)
+            else:
+                self.logger.info(
+                    "No stored Next-Action ID; obtaining one from Browser Run."
                 )
-
-                self.get_next_action()
-
-                self.logger.info("Next-Action ID refreshed. Retrying Scope request.")
-
-                # If this fails, the exception propagates and the scraper fails.
-                raw_movies = self.fetch_from_scope()
+                action_id = await self.refresh_next_action(env)
+                raw_movies = await self.fetch_from_scope(action_id)
 
             self.logger.info("Received %d movies from Scope", len(raw_movies))
+
             movies = [
                 {
                     "externalId": str(movie["id"]),
@@ -87,101 +72,114 @@ class ScopeProvider(BaseProvider):
                 for movie in raw_movies
             ]
 
-            self.logger.info("Scope provider completed")
-            return IngestionPayload(
+            result = IngestionPayload(
                 provider=self.name,
                 observedAt=datetime.now(timezone.utc),
                 movies=movies,
             )
 
+            self.logger.info("Scope provider completed successfully")
+            return result
+
         except Exception:
-            self.logger.exception("Scope provider failed.")
+            self.logger.exception("Scope provider failed")
             raise
-    
-    def fetch_from_scope(self):
+
+    async def fetch_from_scope(self, action_id: str) -> list:
         self.logger.info("Sending request to Scope Cinemas")
-        self.logger.info(self.PROXY_URL)
-        response = requests.post(
-            self.URL,
-            headers=self.get_headers(),
-            json=self.payload,
-            timeout=(10, 30),
-            proxies={
-                "http": self.PROXY_URL,
-                "https": self.PROXY_URL
-            } if self.PROXY_URL else None
-        )
+
+        options = self._to_js({
+            "method": "POST",
+            "headers": {
+                "Accept": "text/x-component",
+                "Content-Type": "text/plain;charset=UTF-8",
+                "Next-Action": action_id,
+                "Origin": "https://www.scopecinemas.com",
+                "Referer": self.URL,
+            },
+            "body": json.dumps(self.PAYLOAD),
+        })
+
+        response = await fetch(self.URL, options)
+        response_text = await response.text()
 
         self.logger.info(
             "Scope responded with HTTP %d",
-            response.status_code
+            response.status,
         )
 
-        response.encoding = "utf-8"
-        response.raise_for_status()
+        if not response.ok:
+            raise RuntimeError(
+                f"Scope returned HTTP {response.status}: "
+                f"{response_text[:500]}"
+            )
 
-        result = self.parse_response(response)
+        result = self.parse_response(
+            response.status,
+            response_text,
+            response.headers.get("content-type") or "",
+        )
 
         self.logger.info("Scope response parsed successfully")
-
         return result["data"]
 
-    
-    def get_headers(self):
-        return {
-            "Accept": "text/x-component",
-            "Content-Type": "text/plain;charset=UTF-8",
-            "Next-Action": get_next_action_id(),
-            "Origin": "https://www.scopecinemas.com",
-            "Referer": self.URL,
-        }
-        
+    async def refresh_next_action(self, env) -> str:
+        self.logger.info("Refreshing Next-Action ID through Browser Run")
 
-    def get_next_action(self):
-        self.logger.info("Refreshing Scope Next-Action ID using Playwright")
+        helper = env.SCOPE_BROWSER_HELPER
+        helper_key = env.BROWSER_HELPER_API_KEY
+
+        if not helper or not helper_key:
+            raise RuntimeError(
+                "SCOPE_BROWSER_HELPER or BROWSER_HELPER_API_KEY is not configured"
+            )
+
+        options = self._to_js({
+            "method": "POST",
+            "headers": {
+                "Authorization": f"Bearer {helper_key}",
+            },
+        })
+
+        request = Request.new(
+            "https://browser-helper.internal/",
+            options,
+        )
+
+        response = await helper.fetch(request)
+        response_text = await response.text()
+
+        if not response.ok:
+            raise RuntimeError(
+                f"Browser helper returned HTTP {response.status}: "
+                f"{response_text[:500]}"
+            )
 
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=True,
-                    proxy={
-                        "server": self.PROXY_SERVER,
-                        "username": self.PROXY_USERNAME,
-                        "password": self.PROXY_PASSWORD
-                    } if all([self.PROXY_SERVER, self.PROXY_USERNAME, self.PROXY_PASSWORD]) else None
-                )
+            result = json.loads(response_text)
+            action_id = result.get("nextActionId")
+        except (json.JSONDecodeError, AttributeError) as exc:
+            raise RuntimeError(
+                "Browser helper returned invalid JSON"
+            ) from exc
 
-                try:
-                    page = browser.new_page()
+        if not isinstance(action_id, str) or not action_id:
+            raise RuntimeError(
+                "Browser helper response has no valid nextActionId"
+            )
 
-                    with page.expect_request(
-                        lambda request: (
-                            request.method == "POST"
-                            and self.API_PATH in request.url
-                        ),
-                        timeout=60_000,
-                    ) as request_info:
-                        page.goto(self.URL, timeout=60_000)
+        await env.SCOPE_NEXT_ACTION.put("last_run", action_id)
 
-                    request = request_info.value
-                    action_id = request.headers.get("next-action")
+        self.logger.info("Next-Action ID refreshed and stored in KV")
+        return action_id
 
-                    if not action_id:
-                        raise RuntimeError("Next-Action header not found")
-
-                    update_next_action_id(action_id)
-
-                    self.logger.info("Next-Action ID refreshed successfully")
-
-                finally:
-                    browser.close()
-
-        except Exception:
-            self.logger.exception("Failed to refresh Next-Action ID")
-            raise
-
-    def parse_response(self, response):
-        for line in response.text.splitlines():
+    def parse_response(
+        self,
+        status_code: int,
+        response_text: str,
+        content_type: str,
+    ) -> dict:
+        for line in response_text.splitlines():
             if not line.startswith("1:"):
                 continue
 
@@ -202,8 +200,8 @@ class ScopeProvider(BaseProvider):
 
         self.logger.error(
             "Unexpected Scope response: status=%d, content_type=%s",
-            response.status_code,
-            response.headers.get("Content-Type"),
+            status_code,
+            content_type,
         )
 
         raise ValueError(

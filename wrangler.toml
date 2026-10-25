@@ -1,0 +1,24 @@
+name = "mtas-scraper"
+main = "main.py"
+compatibility_date = "2026-03-17"
+compatibility_flags = ["nodejs_compat", "python_workers"]
+
+crons = ["*/5 * * * *"]
+
+[browser]
+binding = "MYBROWSER"
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[vars]
+BACK_END_URL = "https://movie-ticket-alert-api.vercel.app"
+
+[[kv_namespaces]]
+binding = "SCOPE_NEXT_ACTION"
+id = "07e7ade8f3ae4c24ba3382164c7388ac"
+
+[[services]]
+binding = "SCOPE_BROWSER_HELPER"
+service = "mtas-scope-browser-helper"
